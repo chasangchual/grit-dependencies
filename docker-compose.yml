@@ -1,3 +1,25 @@
+version: '3.8'
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@grit-postgres:5432/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__SMTP__SMTP_HOST: grit-mailserver
+    AIRFLOW__SMTP__SMTP_PORT: 25
+    AIRFLOW__SMTP__SMTP_USER: admin@${MAIL_DOMAIN}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
   postgres:
     image: postgres:16
@@ -11,6 +33,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -45,8 +68,67 @@ services:
       - neo4j_data:/data
       - neo4j_logs:/logs
 
+  redis:
+    image: redis:7-alpine
+    container_name: grit-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- NEW SERVICES ---
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: grit-airflow-webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: grit-airflow-scheduler
+    command: scheduler
+
+  sftp:
+    image: atmoz/sftp
+    container_name: grit-sftp
+    platform: linux/amd64  # Forces emulation via Rosetta 2 on Mac
+    restart: unless-stopped
+    ports:
+      - "2222:22"
+    volumes:
+      - ./sftp_upload:/home/${SFTP_USER}/upload
+    command: ${SFTP_USER}:${SFTP_PASS}:1001
+
+  mailserver:
+    image: mailserver/docker-mailserver
+    container_name: grit-mailserver
+    hostname: mail
+    domainname: ${MAIL_DOMAIN}
+    environment:
+      ENABLE_SPAMASSASSIN: 0
+      ENABLE_CLAMAV: 0
+      ENABLE_FAIL2BAN: 0
+    ports:
+      - "25:25"
+      - "587:587"
+
 volumes:
   postgres_data:
   minio_data:
   neo4j_data:
   neo4j_logs:
+  redis_data:
