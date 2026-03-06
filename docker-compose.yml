@@ -1,13 +1,10 @@
-version: '3.8'
-
 x-airflow-common: &airflow-common
   image: apache/airflow:2.8.1
-  environment:
-    &airflow-common-env
+  environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@grit-postgres:5432/airflow
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__SMTP__SMTP_HOST: grit-mailserver
     AIRFLOW__SMTP__SMTP_PORT: 25
     AIRFLOW__SMTP__SMTP_USER: admin@${MAIL_DOMAIN}
@@ -22,7 +19,7 @@ x-airflow-common: &airflow-common
 
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16-trixie
     container_name: grit-postgres
     restart: unless-stopped
     environment:
@@ -83,7 +80,22 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- NEW SERVICES ---
+  airflow-init:
+    <<: *airflow-common
+    container_name: grit-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate && \
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USERNAME}" \
+          --firstname "${AIRFLOW_ADMIN_FIRSTNAME}" \
+          --lastname "${AIRFLOW_ADMIN_LASTNAME}" \
+          --role Admin \
+          --email "${AIRFLOW_ADMIN_EMAIL}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD}" || true
+    restart: "no"
 
   airflow-webserver:
     <<: *airflow-common
@@ -91,6 +103,11 @@ services:
     command: webserver
     ports:
       - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 30s
@@ -101,11 +118,16 @@ services:
     <<: *airflow-common
     container_name: grit-airflow-scheduler
     command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   sftp:
     image: atmoz/sftp
     container_name: grit-sftp
-    platform: linux/amd64  # Forces emulation via Rosetta 2 on Mac
+    platform: linux/amd64 # Forces emulation via Rosetta 2 on Mac
     restart: unless-stopped
     ports:
       - "2222:22"
