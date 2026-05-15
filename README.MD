@@ -2,17 +2,19 @@
 
 This repository provisions a local infrastructure stack for development and testing.
 
-It includes:
-- **PostgreSQL 16 + pgvector** (application database, vector search, and Airflow metadata)
-- **Apache Airflow 2.8.1** using **LocalExecutor**
-- **Airflow init service** to bootstrap the metadata DB and create an admin user
+## Services
+
+### Core (docker-compose.yml)
+- **PostgreSQL 17 + pgvector** (application database, vector search)
+- **Authentik** (identity provider - server + worker)
 - **MinIO** (S3-compatible object storage)
 - **Neo4j 5** (graph database)
-- **Redis 7** (kept for another local project; Airflow does **not** require it in this setup)
-- **Alpine SFTP** (source data simulation)
-- **Docker Mailserver** (email testing)
+- **Redis 7** (caching)
 
-In this version, **`celery-worker` and `celery-flower` are removed** because Airflow is configured with `LocalExecutor`.
+### Additional Stacks
+- **docker-compose-full.yml**: Full stack with Airflow, SFTP, Mailserver
+- **docker-compose-db.yml**: Database services only (PostgreSQL, MinIO, Neo4j, Redis)
+- **docker-compose-n8n.yml**: n8n workflow automation
 
 ---
 
@@ -21,8 +23,7 @@ In this version, **`celery-worker` and `celery-flower` are removed** because Air
 - **Docker Engine / Docker Desktop**
 - **Docker Compose v2**
 - **System Memory:** minimum 4 GB, 8 GB+ recommended
-- **Mac users (Apple Silicon):** install **Rosetta 2** if needed because the SFTP service uses `linux/amd64`
-
+- **Mac users (Apple Silicon):** install **Rosetta 2** if needed for certain services
 ```bash
 softwareupdate --install-rosetta
 ```
@@ -31,272 +32,274 @@ softwareupdate --install-rosetta
 
 ## 2. Files
 
-Place these files in your project root:
-- `docker-compose.yml`
-- `init-db.sh`
-- `.env` (copy from `.env.example`)
-- `.env.example`
-
 ### docker-compose.yml
-This compose file starts:
-- `postgres`
-- `minio`
-- `neo4j`
-- `redis`
-- `airflow-init`
-- `airflow-webserver`
-- `airflow-scheduler`
-- `sftp`
-- `mailserver`
+Core services: PostgreSQL, Authentik, MinIO, Neo4j, Redis
 
-Airflow uses:
-- `AIRFLOW__CORE__EXECUTOR=LocalExecutor`
-- PostgreSQL for metadata
-- no Celery worker
-- `airflow-init` to run `airflow db migrate` and create an admin user before the webserver and scheduler start
+### docker-compose-full.yml
+Full stack including:
+- Airflow 2.8.1 (LocalExecutor, no Celery)
+- SFTP (source data simulation)
+- Docker Mailserver
 
 ### init-db.sh
-This script:
-- creates the `airflow` database
-- enables `vector` in `${POSTGRES_DB}`
-- enables `vector` in `airflow`
+PostgreSQL initialization script that:
+- Creates the Authentik database if not exists
+- Enables `vector` extension in the primary database
+- Enables `vector` extension in the Authentik database
 
 ### .env
-Create `.env` by copying `.env.example` and replacing sample values.
+Environment configuration. Copy from `.env.example` and customize.
 
-To generate `AIRFLOW_FERNET_KEY`:
+---
 
+## 3. Environment Variables
+
+### Required (.env.example)
+
+```dotenv
+# PostgreSQL
+POSTGRES_DB=grit
+POSTGRES_USER=grit-admin
+POSTGRES_PASSWORD=<db_password>
+POSTGRES_PORT=5432
+
+# MinIO
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=<minio_password>
+MINIO_SERVICE_PORT=9001
+MINIO_CONSOLE_PORT=9000
+
+# Neo4j
+NEO4J_DATABASE=neo4j
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=<neo4j_password>
+
+# Redis
+REDIS_PORT=6379
+
+# Authentik
+AUTHENTIK_DB=authentik
+AUTHENTIK_SECRET_KEY=<generated_secret_key>
+COMPOSE_PORT_HTTP=9400
+COMPOSE_PORT_HTTPS=9443
+```
+
+### Generating Secrets
+
+**Authentik Secret Key:**
+```bash
+openssl rand -base64 50
+```
+
+**For Airflow (if using docker-compose-full.yml):**
 ```bash
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 ---
 
-## 3. Example .env
+## 4. Quick Start
 
-```dotenv
-# Postgres
-POSTGRES_DB=grit
-POSTGRES_USER=grit-admin
-POSTGRES_PASSWORD=password123
-
-# MinIO
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=minioadmin
-
-# Neo4j
-NEO4J_DATABASE=neo4j
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password123
-
-# Redis
-REDIS_PORT=6379
-
-# SFTP
-SFTP_USER=grituser
-SFTP_PASS=gritpass
-
-# Email
-MAIL_DOMAIN=example.com
-
-# Airflow
-AIRFLOW_FERNET_KEY=YOUR_GENERATED_KEY_HERE
-AIRFLOW_UID=50000
-AIRFLOW_ADMIN_USERNAME=admin
-AIRFLOW_ADMIN_PASSWORD=admin
-AIRFLOW_ADMIN_FIRSTNAME=Admin
-AIRFLOW_ADMIN_LASTNAME=User
-AIRFLOW_ADMIN_EMAIL=admin@example.com
-```
-
----
-
-## 4. Initialization
-
-Create local directories and make the database init script executable:
+### Initial Setup
 
 ```bash
+# Copy environment file
+cp .env.example .env
+
+# Edit .env with your values
+nano .env
+
+# Create required directories
 mkdir -p ./airflow/dags ./airflow/logs ./airflow/plugins ./sftp_upload
+
+# Set permissions
 chmod -R 777 ./airflow
 chmod +x init-db.sh
 ```
 
-> Note: PostgreSQL init scripts in `/docker-entrypoint-initdb.d` run only when the database directory is empty. If `postgres_data` already exists, `init-db.sh` will not run again automatically.
+### Start Services
 
-If this is a fresh start and you want a clean bootstrap:
-
-```bash
-docker compose down -v
-docker compose up -d
-```
-
-On startup, `airflow-init` will:
-- wait for Postgres to be healthy
-- run `airflow db migrate`
-- create the Airflow admin user
-- allow the webserver and scheduler to start afterward
-
----
-
-## 5. How to run
-
-Start all services:
-
+**Core stack:**
 ```bash
 docker compose up -d
 ```
 
-Check status:
+**With Airflow and additional services:**
+```bash
+docker compose -f docker-compose-full.yml up -d
+```
+
+**n8n only:**
+```bash
+docker compose -f docker-compose-n8n.yml up -d
+```
+
+### Check Status
 
 ```bash
 docker compose ps
 ```
 
-Check Airflow init logs:
+### View Logs
 
 ```bash
-docker compose logs airflow-init
-```
-
-Stop services:
-
-```bash
-docker compose down
-```
-
-Stop services and remove volumes:
-
-```bash
-docker compose down -v
+docker compose logs postgresql
+docker compose logs authentik
+docker compose logs -f authentik  # Follow logs
 ```
 
 ---
 
-## 6. What you get
+## 5. Service Endpoints
 
-After startup, these endpoints are available:
+After startup, access these services:
 
-- **Postgres:** `localhost:5432`
-- **MinIO API:** `http://localhost:9000`
-- **MinIO Console:** `http://localhost:9001`
-- **Neo4j Browser:** `http://localhost:7474`
-- **Neo4j Bolt:** `localhost:7687`
-- **Redis:** `localhost:6379`
-- **Airflow UI:** `http://localhost:8080`
-- **SFTP:** `localhost:2222`
-- **SMTP:** `localhost:25`
-- **Mail submission:** `localhost:587`
-
-Default Airflow admin credentials come from `.env`:
-- username: `${AIRFLOW_ADMIN_USERNAME}`
-- password: `${AIRFLOW_ADMIN_PASSWORD}`
+| Service | Endpoint | Default Credentials |
+|---------|----------|---------------------|
+| PostgreSQL | `localhost:5432` | From `.env` |
+| Authentik UI | `http://localhost:9400` | Configure on first run |
+| MinIO API | `http://localhost:9000` | From `.env` |
+| MinIO Console | `http://localhost:9001` | From `.env` |
+| Neo4j Browser | `http://localhost:7474` | From `.env` |
+| Neo4j Bolt | `localhost:7687` | From `.env` |
+| Redis | `localhost:6379` | N/A |
+| Airflow UI (full stack) | `http://localhost:8080` | From `.env` |
+| SFTP (full stack) | `localhost:2222` | From `.env` |
+| n8n (n8n stack) | `http://localhost:5678` | N/A |
 
 ---
 
-## 7. How to verify
+## 6. Verification
 
-### Verify containers
-
-```bash
-docker compose ps
-```
-
-### Verify Postgres databases
+### PostgreSQL
 
 ```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d postgres -c "\l"
+# Check connection
+docker compose exec postgresql psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1;"
+
+# List databases
+docker compose exec postgresql psql -U "$POSTGRES_USER" -d postgres -c "\l"
+
+# Verify pgvector extension
+docker compose exec postgresql psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT extname FROM pg_extension WHERE extname='vector';"
 ```
 
-You should see both your main database (for example `grit`) and `airflow`.
-
-### Verify pgvector
-
-```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT extname FROM pg_extension WHERE extname='vector';"
-docker compose exec postgres psql -U "$POSTGRES_USER" -d airflow -c "SELECT extname FROM pg_extension WHERE extname='vector';"
-```
-
-### Verify Airflow init
-
-```bash
-docker compose logs airflow-init
-```
-
-You should see successful output from `airflow db migrate`.
-
-### Verify Airflow web UI
-Open `http://localhost:8080`
-
-### Verify Redis
+### Redis
 
 ```bash
 docker compose exec redis redis-cli ping
+# Expected: PONG
 ```
 
-Expected result:
+### Authentik
 
-```text
-PONG
-```
-
-### Verify MinIO
-Open `http://localhost:9001` and sign in with values from `.env`.
-
-### Verify Neo4j
-Open `http://localhost:7474` and sign in with values from `.env`.
+Access `http://localhost:${COMPOSE_PORT_HTTP:-9400}` and complete initial setup.
 
 ---
 
-## 8. Troubleshooting
+## 7. Troubleshooting
 
-### Problem: `airflow` database does not exist
+### Database Not Created
 
-This usually means `postgres_data` already existed, so `init-db.sh` did not run again.
-
-#### Manual recovery steps (without deleting volumes)
-
-Run the following commands:
+If `postgres_data` volume exists, `init-db.sh` won't re-run:
 
 ```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE airflow;"
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS vector;"
-docker compose exec postgres psql -U "$POSTGRES_USER" -d airflow -c "CREATE EXTENSION IF NOT EXISTS vector;"
-docker compose run --rm airflow-init
-```
+# Option 1: Manual creation
+docker compose exec postgresql psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE authentik;"
+docker compose exec postgresql psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+docker compose exec postgresql psql -U "$POSTGRES_USER" -d authentik -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
-That will:
-- create the `airflow` database
-- enable `vector` in both databases
-- rerun Airflow metadata initialization and admin-user creation
-
-#### Clean reset option
-
-```bash
+# Option 2: Clean reset
 docker compose down -v
 docker compose up -d
 ```
 
-Use this when you are fine removing existing local Postgres data.
+### Missing Environment Variables
 
-### Problem: Airflow UI is up but login fails
+Authentik requires `AUTHENTIK_SECRET_KEY`:
+```bash
+# Check .env
+grep AUTHENTIK_SECRET_KEY .env
 
-Check the value of these variables in `.env`:
-
-```dotenv
-AIRFLOW_ADMIN_USERNAME=admin
-AIRFLOW_ADMIN_PASSWORD=admin
+# Generate if missing
+echo "AUTHENTIK_SECRET_KEY=$(openssl rand -base64 50)" >> .env
 ```
 
-If needed, recreate the user:
+### Service Dependencies
+
+Services depend on PostgreSQL health. If services fail:
+```bash
+# Check PostgreSQL health
+docker compose exec postgresql pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+
+# Restart dependent services
+docker compose restart authentik
+```
+
+### Port Conflicts
+
+If ports are in use, edit `.env`:
+```bash
+# Change ports
+POSTGRES_PORT=5433
+MINIO_SERVICE_PORT=9002
+```
+
+---
+
+## 8. Data Persistence
+
+All services use named Docker volumes:
 
 ```bash
-docker compose run --rm airflow-init
+# List volumes
+docker volume ls | grep grit
+
+# Remove all data (destructive)
+docker compose down -v
 ```
 
-### Problem: `airflow-init` finished before you checked it
+---
 
-This is normal. It is a one-time bootstrap container. View its logs with:
+## 9. Stop Services
 
 ```bash
-docker compose logs airflow-init
+# Stop all services
+docker compose down
+
+# Stop and remove volumes (deletes all data)
+docker compose down -v
+
+# Stop specific stack
+docker compose -f docker-compose-full.yml down
 ```
+
+---
+
+## 10. Alternative Configurations
+
+### Database Only
+```bash
+docker compose -f docker-compose-db.yml up -d
+```
+
+### n8n Workflow Automation
+```bash
+docker compose -f docker-compose-n8n.yml up -d
+```
+
+### Combine Multiple Files
+```bash
+docker compose -f docker-compose.yml -f docker-compose-n8n.yml up -d
+```
+
+---
+
+## Related Documentation
+
+- PostgreSQL pgvector: https://github.com/pgvector/pgvector
+- Authentik: https://goauthentik.io/docs/
+- MinIO: https://min.io/docs/minio/linux/operations/
+- Neo4j: https://neo4j.com/docs/
+- Airflow: https://airflow.apache.org/docs/
+- n8n: https://docs.n8n.io/

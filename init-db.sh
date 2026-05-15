@@ -4,8 +4,9 @@ set -e
 # If AUTHENTIK_DB is not set, default to 'authentik' 
 # or exit with an error so you don't get the "" error.
 : "${AUTHENTIK_DB:=authentik}"
+: "${PERFECT_DB:=prefect}"
 
-# 1. Create the database if it doesn't exist
+# 1. Create the Authentik database if it doesn't exist
 # We use " " around the db name in the SELECT to handle special characters
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" <<-EOSQL
     SELECT 'CREATE DATABASE "$AUTHENTIK_DB"'
@@ -21,4 +22,9 @@ EOSQL
 # 3. Install extension in the newly created Authentik database
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$AUTHENTIK_DB" <<-EOSQL
     CREATE EXTENSION IF NOT EXISTS vector;
+EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" <<-EOSQL
+    SELECT 'CREATE DATABASE "$PERFECT_DB"'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$PERFECT_DB') \gexec
 EOSQL
