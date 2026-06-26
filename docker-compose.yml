@@ -115,58 +115,29 @@ services:
       - ./certs:/certs
       - ./custom-templates:/templates
 
-  prefect-server:
-    image: prefecthq/prefect:3-latest
-    depends_on:
-      postgresql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgresql:${POSTGRES_PORT}/${PERFECT_DB}
-      PREFECT_SERVER_API_HOST: 0.0.0.0
-      PREFECT_SERVER_UI_API_URL: http://localhost:${PERFECT_UI_API_PORT}/api
-      PREFECT_MESSAGING_BROKER: prefect_redis.messaging
-      PREFECT_MESSAGING_CACHE: prefect_redis.messaging
-      PREFECT_REDIS_MESSAGING_HOST: redis
-      PREFECT_REDIS_MESSAGING_PORT: ${REDIS_PORT}
-      PREFECT_REDIS_MESSAGING_DB: 0
-      PREFECT_SERVER_API_AUTH_STRING: "admin:gS64fQQyJjdQ"
-    command: prefect server start --no-services
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: rabbitmq
+    hostname: rabbitmq-node
     ports:
-      - "${PERFECT_UI_API_PORT:-4200}:4200"
+      - "5672:5672"   # AMQP protocol port (app connections)
+      - "15672:15672" # Management UI web console
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: gS64fQQyJjdQ
+      RABBITMQ_DEFAULT_VHOST: mastermind 
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:${PERFECT_UI_API_PORT}/api/health', timeout=1)"]
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  prefect-services:
-    image: prefecthq/prefect:3-latest
-    depends_on:
-      prefect-server:
-        condition: service_healthy
-    environment:
-      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgresql:${POSTGRES_PORT}/${PERFECT_DB}
-      PREFECT_MESSAGING_BROKER: prefect_redis.messaging
-      PREFECT_MESSAGING_CACHE: prefect_redis.messaging
-      PREFECT_REDIS_MESSAGING_HOST: redis
-      PREFECT_REDIS_MESSAGING_PORT: ${REDIS_PORT}
-      PREFECT_REDIS_MESSAGING_DB: 0
-    command: prefect server services start
-
-  prefect-worker:
-    image: prefecthq/prefect:3-latest
-    depends_on:
-      prefect-server:
-        condition: service_healthy
-    environment:
-      PREFECT_API_URL: http://prefect-server:${PERFECT_UI_API_PORT}/api
-    command: prefect worker start --pool local-pool
-    restart: on-failure
+      retries: 5
+    restart: unless-stopped
 
 volumes:
+  rabbitmq_data:
+    driver: local
   postgres_data:
   minio_data:
   neo4j_data:
