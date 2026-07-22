@@ -28,3 +28,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" <<-EOSQL
     SELECT 'CREATE DATABASE "$PERFECT_DB"'
     WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$PERFECT_DB') \gexec
 EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" <<-EOSQL
+    SELECT 'CREATE DATABASE "$MASTERMIND_DB"'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$MASTERMIND_DB') \gexec
+EOSQL
